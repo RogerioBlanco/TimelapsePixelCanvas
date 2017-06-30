@@ -12,7 +12,6 @@ AREA_LEFT = 7
 AREA_RIGHT = 8
 TOTAL_AREA = AREA_LEFT + AREA_RIGHT
 AREA_SIZE = TOTAL_AREA * BLOCK_SIZE
-AREA = AREA_SIZE * AREA_SIZE
 
 COLORS = [
 	(255, 255, 255),
@@ -36,7 +35,7 @@ COLORS = [
 URL = 'http://pixelcanvas.io/api/bigchunk/%s.%s.bmp'
 
 def download_bmp(x, y):
-	return urlopen(request(URL % (x, y), headers = {'User-agent':'timelapse bot'})).read()
+	return urlopen(request(URL % (x, y), headers = {'User-agent':'Mozilla/5.0 (compatible; MSIE 10.0; Windows NT 6.1; Trident/6.0)'})).read()
 
 def parse_args():
 	parser = ArgumentParser()
@@ -49,8 +48,6 @@ def parse_args():
 	parser.add_argument('--end_x', required=False, type=int, dest='end_x')
 	parser.add_argument('--start_y', required=False, type=int, dest='start_y')
 	parser.add_argument('--end_y', required=False, type=int, dest='end_y')
-	#parser.add_argument('--proxy_url', required=False, dest='proxy_url', help='Proxy url with port. ex: url:port')
-	#parser.add_argument('--proxy_auth', required=False, dest='proxy_auth', help='Proxy authentication. ex: user:pass')
 
 	return parser.parse_args()
 
@@ -71,12 +68,13 @@ def valide_args(args):
 	if args.seconds < 1:
 		raise ValueError("The seconds must be positive and non-zero")
 
-	if all(v is None for v in [args.x, args.y]):
+	if all(not v is None for v in [args.x, args.y]):
 		if args.radius < 1:
 			raise ValueError("The radius must be positive and non-zero and odd")
 
 		if not args.radius % 2:
-			raise ValueError("The radius must be odd")
+			raise ValueError("The radius must be odd")	
+
 
 def calc_radius(arg_radius, start_x, end_x, start_y, end_y):
 	if all(not v is None for v in [start_x, end_x, start_y, end_y]):
@@ -87,7 +85,7 @@ def calc_radius(arg_radius, start_x, end_x, start_y, end_y):
 	return arg_radius
 
 def calc_size_area(radius):
-	return (radius^2) * AREA
+	return radius * AREA_SIZE
 
 def get_points(x, y, start_x, end_x, start_y, end_y):
 	if all(not v is None for v in [x, y]):
@@ -119,9 +117,9 @@ def bigchunck(radius, point_x, point_y):
 			for block_y in xrange(center_y - AREA_LEFT, center_y + AREA_RIGHT):
 				for block_x in xrange(center_x - AREA_LEFT, center_x + AREA_RIGHT):
 					for y in xrange(BLOCK_SIZE):
-						actual_y = block_y * BLOCK_SIZE + y
+						actual_y = (block_y * BLOCK_SIZE) + y
 						for x in xrange(0, BLOCK_SIZE, 2):
-							actual_x = block_x * BLOCK_SIZE + x
+							actual_x = (block_x * BLOCK_SIZE) + x
 							map_image[actual_x    ][actual_y] = ord(raw[index]) >> 4
 							map_image[actual_x + 1][actual_y] = ord(raw[index]) & 0x0F
 							index += 1
@@ -157,21 +155,33 @@ def convert_custom_image(map_image, pix, start_x, end_x, start_y, end_y):
 
 def convert_image_total(map_image, pix, radius, point_x, point_y):
 	iteration = get_iteration(radius)
-	#for x in xrange((point_x - (iteration + AREA_LEFT)) * BLOCK_SIZE, (iteration + AREA_RIGHT + point_x) * BLOCK_SIZE):
-	#	for y in xrange((point_y - (iteration + AREA_LEFT)) * BLOCK_SIZE, (iteration + AREA_RIGHT + point_y) * BLOCK_SIZE):
-	#		for block_y in xrange(center_y - AREA_LEFT, center_y + AREA_RIGHT):
-	#			for block_x in xrange(center_x - AREA_LEFT, center_x + AREA_RIGHT):
-	#		pix[pix_x, pix_y] = COLORS[map_image[x][y]]
-	#		pix_y += 1
-	#	pix_x += 1
+	pix_x, pix_y = 0, 0
+
+	for y in xrange((point_y - (iteration + AREA_LEFT)) * BLOCK_SIZE, (point_y + (iteration + AREA_RIGHT)) * BLOCK_SIZE):
+		pix_x = 0
+		for x in xrange((point_x - (iteration + AREA_LEFT))* BLOCK_SIZE, (point_y + (iteration + AREA_RIGHT)) * BLOCK_SIZE):
+			pix[pix_x, pix_y] = COLORS[map_image[x][y]]
+			pix_x += 1
+		pix_y += 1
 	return pix
 
 def save_image(image, directory):
 	if not os.path.exists(directory):
 		os.makedirs(directory)
-	name_file = os.path.join(directory, datetime.datetime.utcnow().strftime("%Y%m%d%H%MUTC") + '.png')
+	name_file = os.path.join(directory, datetime.datetime.utcnow().strftime("%Y%m%d%H%M%SUTC") + '.png')
 	image.save(name_file)
-	pass
+
+def download_save_image(directory, radius, width, height, point_x, point_y, start_x, start_y, end_x, end_y):
+	map_image = bigchunck(radius, point_x, point_y)
+
+	image, pix = create_image(width, height)
+
+	if all(not v is None for v in [start_x, end_x, start_y, end_y]):
+		image.pix = convert_custom_image(map_image, pix, start_x, end_x, start_y, end_y)
+	else:
+		image.pix = convert_image_total(map_image, pix, radius, point_x, point_y)
+	
+	save_image(image, directory)
 
 def main():
 	args = parse_args()
@@ -184,16 +194,19 @@ def main():
 
 	width, height = get_sizes(radius, args.x, args.y, args.start_x, args.end_x, args.start_y, args.end_y)	
 	
-	map_image = bigchunck(radius, point_x, point_y)
+	if radius > 5 and raw_input('Are you sure do you want a radius above 5?\nIt\'s require a lot of CPU and memory.\ny(Yes)/anything(No)\n') in ['y']:
+		raise KeyboardInterrupt()
+	
+	schedule = sched.scheduler(time.time, time.sleep)
+	def scheduler(sc, seconds, directory, radius, width, height, point_x, point_y, start_x, start_y, end_x, end_y):
+		download_save_image(directory, radius, width, height, point_x, point_y, start_x, start_y, end_x, end_y)	
+		
+		sc.enter(seconds, 1, scheduler, (sc, seconds, directory, radius, width, height, point_x, point_y, start_x, start_y, end_x, end_y))
+	
+	schedule.enter(args.seconds, 1, scheduler, (schedule, args.seconds, args.directory, radius, width, height, point_x, point_y, args.start_x, args.start_y, args.end_x, args.end_y))
+	
+	schedule.run()
 
-	image, pix = create_image(width, height)
-
-	if all(not v is None for v in [args.start_x, args.end_x, args.start_y, args.end_y]):
-		image.pix = convert_custom_image(map_image, pix, args.start_x, args.end_x, args.start_y, args.end_y)
-	else:
-		image.pix = convert_image_total(map_image, pix, radius, point_x, point_y)
-
-	save_image(image, args.directory)
 
 if __name__ == '__main__':	
 	try:
